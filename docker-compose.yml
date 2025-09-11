@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -35,6 +35,18 @@ services:
       timeout: 5s
       retries: 5
 
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com   # login email
+      PGADMIN_DEFAULT_PASSWORD: admin         # login password
+    ports:
+      - "5050:80" # pgAdmin UI available at http://localhost:5050
+    volumes:
+      - pgadmindata:/var/lib/pgadmin
+    restart: unless-stopped
+
 volumes:
   pgdata:
   miniodata:
+  pgadmindata:
