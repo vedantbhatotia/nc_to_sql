@@ -1,0 +1,10 @@
+xarray
+netCDF4
+numpy
+pandas
+pyarrow
+sqlalchemy
+psycopg2-binary
+geoalchemy2
+python-dateutil
+loguru
