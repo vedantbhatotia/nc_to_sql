@@ -1,30 +1,27 @@
 version: "3.8"
+
 services:
   postgres:
     image: postgis/postgis:15-3.4
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: argo
-      POSTGRES_PASSWORD: argo_pass
-      POSTGRES_DB: argo_db
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "argo", "-d", "argo_db"]
+      test: ["CMD-SHELL", "pg_isready -U $PG_USER -d $PG_DB"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   minio:
     image: minio/minio:latest
-    environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
-      MINIO_BROWSER: "on"
-      MINIO_REGION: "us-east-1"
+    env_file:
+      - .env
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000" # MinIO API
@@ -33,7 +30,7 @@ services:
       - miniodata:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9000/minio/health/live || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
