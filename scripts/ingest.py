@@ -295,13 +295,34 @@ def ingest_one_file(nc_file):
                              {'f': source_file,'c': checksum,'err': str(e)})
 
 
-# -----------------------------
 # Main CLI
 # -----------------------------
-if __name__=="__main__":
+if __name__ == "__main__":
     import sys
-    if len(sys.argv)<2:
-        logger.error("Usage: python scripts/ingest.py <netcdf_file>")
+    import glob
+
+    # ingest all the nc files present in the samples folders
+
+    if len(sys.argv) < 2:
+        logger.error("Usage: python scripts/ingest.py <netcdf_file|folder>")
         sys.exit(1)
-    nc_file = sys.argv[1]
-    ingest_one_file(nc_file)
+
+    target = sys.argv[1]
+
+    if os.path.isdir(target):
+        # Batch mode: process all .nc files in the folder
+        nc_files = glob.glob(os.path.join(target, "*.nc"))
+        logger.info(f"Found {len(nc_files)} NetCDF files in {target}")
+
+        if not nc_files:
+            logger.warning(f"No NetCDF files found in {target}")
+            sys.exit(0)
+
+        for nc_file in nc_files:
+            ingest_one_file(nc_file)
+
+        logger.success(f"Batch ingestion complete. {len(nc_files)} files processed.")
+
+    else:
+        # Single file mode
+        ingest_one_file(target)
