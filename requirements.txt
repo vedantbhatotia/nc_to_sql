@@ -10,4 +10,4 @@ python-dateutil
 loguru
 s3fs
 python-dotenv
-matplotlib
+boto3
