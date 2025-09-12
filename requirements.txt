@@ -9,4 +9,5 @@ geoalchemy2
 python-dateutil
 loguru
 s3fs
-dotenv
+python-dotenv
+matplotlib
