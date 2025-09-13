@@ -15,7 +15,7 @@ import boto3
 import botocore
 from sqlalchemy import create_engine, text
 from loguru import logger
-import hashlib
+
 load_dotenv()
 
 # -----------------------------
@@ -54,6 +54,16 @@ s3_fs = s3fs.S3FileSystem(
 # -----------------------------
 # Helpers
 # -----------------------------
+def convert_numpy(obj):
+    """Convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray, list)):
+        return obj.tolist()
+    return obj
+
 def ensure_bucket_exists(bucket_name=BUCKET_NAME):
     s3 = boto3.client(
         "s3",
@@ -102,7 +112,6 @@ def _get_var_case_insensitive(ds, *names):
     return None, None
 
 def canonicalize_float_id(raw_value, checksum: str) -> (str, str):
-    """Return (canonical_float_id, original_value)."""
     fid = ""
     if isinstance(raw_value, (bytes, np.bytes_)):
         fid = raw_value.decode("utf-8", errors="ignore").strip()
@@ -117,7 +126,6 @@ def canonicalize_float_id(raw_value, checksum: str) -> (str, str):
             fid = str(raw_value).strip()
     elif raw_value is not None:
         fid = str(raw_value).strip()
-
     if not fid:
         fid = f"unknown_{checksum[:8]}"
     return fid, str(raw_value) if raw_value is not None else None
@@ -127,7 +135,6 @@ def canonicalize_float_id(raw_value, checksum: str) -> (str, str):
 # -----------------------------
 def extract_profile(ds: xr.Dataset, profile_idx: int, checksum: str) -> dict:
     profile = {}
-
     def get_val(*var_names, default=None):
         name, da = _get_var_case_insensitive(ds, *var_names)
         if da is None: return default
@@ -137,33 +144,19 @@ def extract_profile(ds: xr.Dataset, profile_idx: int, checksum: str) -> dict:
             try: return vals[profile_idx]
             except Exception: pass
         return vals
-
-    # Float ID (canonicalized)
     fid_raw = get_val("platform_number", "PLATFORM_NUMBER")
     fid, fid_orig = canonicalize_float_id(fid_raw, checksum)
     profile["float_id"] = fid
     profile["float_id_raw"] = fid_orig
-
-    # Coordinates
     lat = get_val("latitude", "LATITUDE", "lat")
     lon = get_val("longitude", "LONGITUDE", "lon")
-    try:
-        profile["lat"] = float(np.nan if lat is None else lat)
-    except Exception:
-        profile["lat"] = float(np.nan)
-    try:
-        profile["lon"] = float(np.nan if lon is None else lon)
-    except Exception:
-        profile["lon"] = float(np.nan)
-
-    # Cycle
+    try: profile["lat"] = float(np.nan if lat is None else lat)
+    except Exception: profile["lat"] = float(np.nan)
+    try: profile["lon"] = float(np.nan if lon is None else lon)
+    except Exception: profile["lon"] = float(np.nan)
     cyc = get_val("cycle_number", "CYCLE_NUMBER", "cycle_number")
-    try:
-        profile["cycle_number"] = int(cyc)
-    except Exception:
-        profile["cycle_number"] = -1
-
-    # Profile date
+    try: profile["cycle_number"] = int(cyc)
+    except Exception: profile["cycle_number"] = -1
     juld = get_val("juld", "JULD", "juld_location")
     profile["profile_date"] = None
     if juld is not None:
@@ -171,10 +164,9 @@ def extract_profile(ds: xr.Dataset, profile_idx: int, checksum: str) -> dict:
             profile["profile_date"] = pd.to_datetime(juld).to_pydatetime()
         except Exception:
             try:
-                profile["profile_date"] = datetime(1950, 1, 1) + pd.to_timedelta(float(juld), unit="D")
+                profile["profile_date"] = datetime(1950,1,1) + pd.to_timedelta(float(juld), unit="D")
             except Exception:
                 profile["profile_date"] = None
-
     def extract_array(var_candidates):
         name, da = _get_var_case_insensitive(ds, *var_candidates)
         if da is None: return []
@@ -185,59 +177,53 @@ def extract_profile(ds: xr.Dataset, profile_idx: int, checksum: str) -> dict:
             except Exception: pass
         vals = np.asarray(vals).squeeze()
         fill = da.attrs.get("_FillValue", np.nan)
-        vals = np.where(vals == fill, np.nan, vals)
-        vals = vals.flatten() if vals.ndim > 1 else vals
+        vals = np.where(vals==fill, np.nan, vals)
+        vals = vals.flatten() if vals.ndim>1 else vals
         return np.where(np.isfinite(vals), vals, np.nan).tolist()
-
     profile["PRES"] = extract_array(["PRES", "pres", "DEPTH", "depth"])
     profile["TEMP"] = extract_array(["TEMP", "temp", "TEMPF"])
     profile["PSAL"] = extract_array(["PSAL", "psal", "SALT"])
     profile["DOXY"] = extract_array(["DOXY", "doxy"])
     profile["CHLA"] = extract_array(["CHLA", "chla"])
-
-    # QC summary
     qc_summary = {}
     qc_vars = {
-        "PRES": ["pres_qc", "PRES_QC"],
-        "TEMP": ["temp_qc", "TEMP_QC"],
-        "PSAL": ["psal_qc", "PSAL_QC"],
-        "DOXY": ["doxy_qc", "DOXY_QC"],
-        "CHLA": ["chla_qc", "CHLA_QC"]
+        "PRES": ["pres_qc","PRES_QC"],
+        "TEMP": ["temp_qc","TEMP_QC"],
+        "PSAL": ["psal_qc","PSAL_QC"],
+        "DOXY": ["doxy_qc","DOXY_QC"],
+        "CHLA": ["chla_qc","CHLA_QC"]
     }
     for std, candidates in qc_vars.items():
         name, da = _get_var_case_insensitive(ds, *candidates)
         if da is None:
-            qc_summary[std] = None
+            qc_summary[std]=None
             continue
         vals = da.values
-        prof_dim = _choose_dim_name(ds, "N_PROF", "n_prof")
+        prof_dim = _choose_dim_name(ds, "N_PROF","n_prof")
         if prof_dim and prof_dim in da.dims:
             try: vals = vals[profile_idx]
             except Exception: pass
         vals = np.asarray(vals).squeeze()
-        if vals.size == 0:
-            qc_summary[std] = None
-            continue
-        good_flags = np.sum((vals == b"1") | (vals == "1") | (vals == 1))
-        qc_summary[std] = round((good_flags / vals.size) * 100) if vals.size > 0 else None
-
-    profile["qc_summary"] = qc_summary
+        if vals.size==0: qc_summary[std]=None; continue
+        good_flags = np.sum((vals==b"1")|(vals=="1")|(vals==1))
+        qc_summary[std]=round((good_flags/vals.size)*100) if vals.size>0 else None
+    profile["qc_summary"]=qc_summary
     return profile
 
 def compute_summary(profile: dict) -> str:
     lat, lon = profile.get("lat", np.nan), profile.get("lon", np.nan)
     date_str = profile.get("profile_date").strftime("%Y-%m-%d") if profile.get("profile_date") else "N/A"
     summary = f"Float {profile.get('float_id','N/A')} cycle {profile.get('cycle_number','N/A')} on {date_str} at ({lat:.2f},{lon:.2f})."
-    for var, unit in [("TEMP", "°C"), ("PSAL", "PSU"), ("DOXY", "µmol/kg"), ("CHLA", "mg/m³")]:
+    for var, unit in [("TEMP","°C"),("PSAL","PSU"),("DOXY","µmol/kg"),("CHLA","mg/m³")]:
         arr = np.array(profile.get(var, []), dtype=float)
         finite = arr[np.isfinite(arr)]
-        if finite.size > 0:
+        if finite.size>0:
             qc = profile.get("qc_summary", {}).get(var, 0) or 0
             summary += f" {var}: mean {np.nanmean(finite):.2f}{unit}, range {np.nanmin(finite):.2f}-{np.nanmax(finite):.2f}{unit} ({qc}% good)."
     return summary
 
 # -----------------------------
-# Ingestion function
+# Ingest one file
 # -----------------------------
 def ingest_one_file(nc_file: str):
     checksum = checksum_file(nc_file)
@@ -245,41 +231,34 @@ def ingest_one_file(nc_file: str):
     log_id = None
     ds = None
     try:
-        # Check previous ingestion
         with engine.begin() as conn:
             res = conn.execute(
                 text("SELECT id,status FROM process_log WHERE file_name=:f AND checksum=:c"),
-                {"f": source_file, "c": checksum}
+                {"f": source_file,"c":checksum}
             ).first()
-            if res and res.status == "OK":
+            if res and res.status=="OK":
                 logger.info(f"⏭ SKIP {source_file} already ingested")
                 conn.execute(
                     text("INSERT INTO process_log(file_name, checksum, status, started_at, ended_at) VALUES(:f,:c,'SKIPPED',now(),now())"),
-                    {"f": source_file, "c": checksum}
+                    {"f": source_file,"c":checksum}
                 )
                 return
             log_id = conn.execute(
                 text("INSERT INTO process_log(file_name, checksum, status, started_at) VALUES(:f,:c,'PROCESSING',now()) RETURNING id"),
-                {"f": source_file, "c": checksum}
+                {"f": source_file,"c":checksum}
             ).scalar_one()
 
         logger.info(f"📥 Ingesting {nc_file}")
         ds = xr.open_dataset(nc_file, mask_and_scale=True)
         n_prof = int(ds.sizes.get("N_PROF") or ds.sizes.get("n_prof") or 1)
 
-        # ---- NEW: Extract float-level metadata ----
-        float_meta = {}
-        try:
-            float_meta = dict(ds.attrs)  # capture global attributes
-        except Exception:
-            float_meta = {}
-
+        float_meta = dict(ds.attrs) if ds.attrs else {}
         platform_type = float_meta.get("platform_type") or float_meta.get("PLATFORM_TYPE")
         wmo_id = float_meta.get("wmo_id") or float_meta.get("WMO_INST_TYPE")
         processed = 0
 
         for i in range(n_prof):
-            profile = extract_profile(ds, i,checksum)
+            profile = extract_profile(ds, i, checksum)
             profile["summary_text"] = compute_summary(profile)
             profile_id = uuid.uuid4()
 
@@ -289,19 +268,19 @@ def ingest_one_file(nc_file: str):
             parquet_uri = f"{PARQUET_BASE_URI.rstrip('/')}/year={year}/month={month}/{parquet_file}"
 
             df = pd.DataFrame({
-                "profile_id": [str(profile_id)],
-                "float_id": [profile.get("float_id")],
-                "cycle_number": [profile.get("cycle_number")],
-                "profile_date": [profile.get("profile_date")],
-                "lat": [profile.get("lat")],
-                "lon": [profile.get("lon")],
-                "summary_text": [profile.get("summary_text")],
-                "qc_summary": [json.dumps(profile.get("qc_summary", {}))],
-                "pres": [profile.get("PRES", [])],
-                "temp": [profile.get("TEMP", [])],
-                "psal": [profile.get("PSAL", [])],
-                "doxy": [profile.get("DOXY", [])],
-                "chla": [profile.get("CHLA", [])]
+                "profile_id":[str(profile_id)],
+                "float_id":[profile.get("float_id")],
+                "cycle_number":[profile.get("cycle_number")],
+                "profile_date":[profile.get("profile_date")],
+                "lat":[profile.get("lat")],
+                "lon":[profile.get("lon")],
+                "summary_text":[profile.get("summary_text")],
+                "qc_summary":[json.dumps(profile.get("qc_summary",{}), default=convert_numpy)],
+                "pres":[profile.get("PRES",[])],
+                "temp":[profile.get("TEMP",[])],
+                "psal":[profile.get("PSAL",[])],
+                "doxy":[profile.get("DOXY",[])],
+                "chla":[profile.get("CHLA",[])]
             })
 
             table = pa.Table.from_pandas(df, preserve_index=False)
@@ -315,24 +294,17 @@ def ingest_one_file(nc_file: str):
                 continue
 
             with engine.begin() as conn:
-                # ---- NEW: Upsert float metadata ----
                 if profile.get("float_id"):
                     conn.execute(text("""
                         INSERT INTO floats(float_id, platform_type, wmo_id, metadata, created_at, updated_at)
-                        VALUES(:fid, :ptype, :wmo, CAST(:meta AS JSONB), now(), now())
-                        ON CONFLICT (float_id) DO UPDATE 
-                          SET platform_type = COALESCE(EXCLUDED.platform_type, floats.platform_type),
-                              wmo_id = COALESCE(EXCLUDED.wmo_id, floats.wmo_id),
-                              metadata = EXCLUDED.metadata,
-                              updated_at = now()
-                    """), {
-                        "fid": profile.get("float_id"),
-                        "ptype": platform_type,
-                        "wmo": wmo_id,
-                        "meta": json.dumps(float_meta)
-                    })
+                        VALUES(:fid,:ptype,:wmo,CAST(:meta AS JSONB),now(),now())
+                        ON CONFLICT (float_id) DO UPDATE
+                        SET platform_type=COALESCE(EXCLUDED.platform_type,floats.platform_type),
+                            wmo_id=COALESCE(EXCLUDED.wmo_id,floats.wmo_id),
+                            metadata=EXCLUDED.metadata,
+                            updated_at=now()
+                    """), {"fid":profile.get("float_id"),"ptype":platform_type,"wmo":wmo_id,"meta":json.dumps(float_meta,default=convert_numpy)})
 
-                # Profile insert/update
                 conn.execute(text("""
                     INSERT INTO profiles(profile_id,float_id,cycle_number,profile_date,lat,lon,geom,
                                          n_levels,min_pres,max_pres,qc_summary,summary_text,parquet_path,
@@ -341,20 +313,20 @@ def ingest_one_file(nc_file: str):
                            :n_levels,:min_pres,:max_pres,CAST(:qc AS JSONB),:summary,:parquet,
                            :src,:cs,:ver,now(),now())
                     ON CONFLICT (float_id, cycle_number) DO UPDATE
-                      SET profile_date = EXCLUDED.profile_date,
-                          lat = EXCLUDED.lat,
-                          lon = EXCLUDED.lon,
-                          geom = EXCLUDED.geom,
-                          n_levels = EXCLUDED.n_levels,
-                          min_pres = EXCLUDED.min_pres,
-                          max_pres = EXCLUDED.max_pres,
-                          qc_summary = EXCLUDED.qc_summary,
-                          summary_text = EXCLUDED.summary_text,
-                          parquet_path = EXCLUDED.parquet_path,
-                          source_file = EXCLUDED.source_file,
-                          source_checksum = EXCLUDED.source_checksum,
-                          ingest_version = EXCLUDED.ingest_version,
-                          updated_at = now()
+                      SET profile_date=EXCLUDED.profile_date,
+                          lat=EXCLUDED.lat,
+                          lon=EXCLUDED.lon,
+                          geom=EXCLUDED.geom,
+                          n_levels=EXCLUDED.n_levels,
+                          min_pres=EXCLUDED.min_pres,
+                          max_pres=EXCLUDED.max_pres,
+                          qc_summary=EXCLUDED.qc_summary,
+                          summary_text=EXCLUDED.summary_text,
+                          parquet_path=EXCLUDED.parquet_path,
+                          source_file=EXCLUDED.source_file,
+                          source_checksum=EXCLUDED.source_checksum,
+                          ingest_version=EXCLUDED.ingest_version,
+                          updated_at=now()
                 """), {
                     "pid": str(profile_id),
                     "fid": profile.get("float_id"),
@@ -363,10 +335,10 @@ def ingest_one_file(nc_file: str):
                     "lat": lat,
                     "lon": lon,
                     "geom": f"POINT({lon} {lat})",
-                    "n_levels": len([x for x in profile.get("PRES", []) if np.isfinite(x)]),
-                    "min_pres": float(np.nanmin(profile.get("PRES", [np.nan]))) if profile.get("PRES") else None,
-                    "max_pres": float(np.nanmax(profile.get("PRES", [np.nan]))) if profile.get("PRES") else None,
-                    "qc": json.dumps(profile.get("qc_summary", {})),
+                    "n_levels": len([x for x in profile.get("PRES",[]) if np.isfinite(x)]),
+                    "min_pres": float(np.nanmin(profile.get("PRES",[np.nan]))) if profile.get("PRES") else None,
+                    "max_pres": float(np.nanmax(profile.get("PRES",[np.nan]))) if profile.get("PRES") else None,
+                    "qc": json.dumps(profile.get("qc_summary",{}),default=convert_numpy),
                     "summary": profile.get("summary_text"),
                     "parquet": parquet_uri,
                     "src": source_file,
@@ -382,7 +354,6 @@ def ingest_one_file(nc_file: str):
 
     except Exception as exc:
         logger.exception(f"❌ Error ingesting {nc_file}: {exc}")
-        # (error handling stays same as before...)
 
 # -----------------------------
 # CLI
@@ -397,18 +368,15 @@ if __name__ == "__main__":
         ensure_parquet_prefix(PARQUET_BASE_URI)
     except Exception:
         logger.debug("Failed ensuring parquet prefix.")
-
-    if len(sys.argv) < 2:
+    if len(sys.argv)<2:
         logger.error("Usage: python ingest.py <netcdf_file_or_folder>")
         sys.exit(1)
-
     target = sys.argv[1]
-    files = []
+    files=[]
     if os.path.isdir(target):
-        files = glob.glob(os.path.join(target, "*.nc"))
+        files=glob.glob(os.path.join(target,"*.nc"))
     else:
-        files = [target]
-
+        files=[target]
     logger.info(f"Found {len(files)} files")
     for f in files:
         ingest_one_file(f)
