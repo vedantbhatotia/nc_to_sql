@@ -15,7 +15,7 @@ import boto3
 import botocore
 from sqlalchemy import create_engine, text
 from loguru import logger
-
+import hashlib
 load_dotenv()
 
 # -----------------------------
@@ -276,11 +276,10 @@ def ingest_one_file(nc_file: str):
 
         platform_type = float_meta.get("platform_type") or float_meta.get("PLATFORM_TYPE")
         wmo_id = float_meta.get("wmo_id") or float_meta.get("WMO_INST_TYPE")
-
         processed = 0
 
         for i in range(n_prof):
-            profile = extract_profile(ds, i)
+            profile = extract_profile(ds, i,checksum)
             profile["summary_text"] = compute_summary(profile)
             profile_id = uuid.uuid4()
 
