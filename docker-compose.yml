@@ -11,6 +11,7 @@ services:
       - "5433:5432"    # host:container (use 5433 on host to avoid collisions)
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d  # <- auto-run SQL on first init
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $PG_USER -d $PG_DB"]

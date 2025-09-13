@@ -4,26 +4,18 @@ Ingest Argo NetCDF files → PostgreSQL (PostGIS) + Parquet (MinIO S3) with one 
 Includes pgAdmin for browsing profiles.
 
 ⚡ Quick Start
-# 1. Clone repo
-git clone 
+1. Clone the repository
+git clone <repo-url>
+cd <repo-folder>
 
-# 2. Start infra (Postgres + MinIO + pgAdmin)
-docker compose up -d
+2. Setup environment variables
 
-# 3. Ingest sample NetCDFs
-docker compose run --rm ingester python scripts/ingest.py samples/
+Copy the example .env and edit if necessary:
+
+cp .env.example .env
 
 
-✅ Profiles appear in PostgreSQL
-✅ Parquet files land in MinIO (partitioned by year/month)
-
-📦 Prerequisites
-
-Docker ≥ 20.10
-
-Docker Compose ≥ 1.29
-
-A .env file with credentials:
+Example .env
 
 # PostgreSQL
 PG_HOST=postgres
@@ -43,51 +35,57 @@ PARQUET_BASE_URI=s3://argo-data/parquet
 INGEST_VERSION=v1
 QUARANTINE_DIR=quarantine
 
+3. Start infrastructure
 
-Place .nc files in samples/ for testing.
+Start PostgreSQL, MinIO, and pgAdmin:
 
-🔧 Services
+docker compose up -d
 
-PostgreSQL + PostGIS → stores metadata
 
-MinIO → S3-compatible Parquet storage
+Note:
 
-pgAdmin → PostgreSQL UI (http://localhost:5050
-, user: admin@admin.com, pass: admin)
+PostgreSQL automatically initializes the schema from ./db-init/schema.sql.
 
-Ingester → Python service that parses .nc and writes to DB + MinIO
+Wait until Postgres is ready:
 
-📥 Ingestion
+docker compose logs -f postgres
+# look for "database system is ready to accept connections"
+
+4. Ingest sample NetCDF files
+
+Place your .nc files in the samples/ folder, then run:
+
 docker compose run --rm ingester python scripts/ingest.py samples/
 
 
-Extracts PRES, TEMP, PSAL, DOXY, CHLA
+What happens:
 
-Computes QC summaries
+Profiles extracted from NetCDF
 
-Inserts metadata into PostgreSQL
+Metadata inserted into PostgreSQL
 
-Writes Parquet:
+Parquet files written to MinIO (partitioned by year/month)
 
-s3://argo-data/parquet/year=YYYY/month=MM/<float>_cycle_<n>.parquet
+Problematic files moved to quarantine/
 
+Notes:
 
-Moves problematic files to quarantine/
+Idempotent: duplicate files are skipped automatically
 
-🔍 Validation
-Parquet (in MinIO)
-docker compose exec minio mc alias set local http://localhost:9000 minio minio123
-docker compose exec minio mc ls local/argo-data/parquet/year=2025/month=09/
+To re-ingest the same profile, delete existing rows first:
 
+DELETE FROM profiles WHERE float_id='1901290' AND cycle_number=249;
+
+5. Validate ingestion
 PostgreSQL (via pgAdmin)
 
 URL: http://localhost:5050
 
 User: admin@admin.com
 
-Pass: admin
+Password: admin
 
-Connect using .env credentials
+Connect to server: postgres (host), port 5432, credentials from .env
 
 Sample queries:
 
@@ -105,24 +103,49 @@ SELECT float_id, cycle_number, profile_date
 FROM profiles
 WHERE (qc_summary->>'TEMP')::int >= 90;
 
-🎯 End-to-End Demo
+MinIO (S3 storage)
+
+Web UI: http://localhost:9000
+ or http://localhost:9001
+
+Credentials: MINIO_ACCESS_KEY / MINIO_SECRET_KEY
+
+Example CLI:
+
+# Alias MinIO locally
+docker compose exec minio mc alias set local http://localhost:9000 minio minio123
+
+# List Parquet files
+docker compose exec minio mc ls local/argo-data/parquet/year=2025/month=09/
+
+6. End-to-End Demo
+# Start services
 docker compose up -d
+
+# Ingest files
 docker compose run --rm ingester python scripts/ingest.py samples/
+
+# View ingester logs
 docker compose logs ingester
 
+7. Notes / Tips
 
-Then:
+Idempotency: duplicate files are skipped; ingestion is checked via checksum.
 
-Browse Parquet in MinIO (or download via S3 tools)
+Quarantine: problematic NetCDFs are moved to quarantine/ for inspection.
 
-Explore metadata in PostgreSQL via pgAdmin
+Partitioning: Parquet files stored by year/month.
 
-📝 Notes
+Force re-ingestion: delete rows from profiles table for specific float_id/cycle_number.
 
-Idempotent: duplicate files skipped
+Custom S3 bucket: update PARQUET_BASE_URI in .env.
 
-Quarantine: problematic NetCDFs stored in quarantine/
+8. Prerequisites
 
-Partitioning: Parquet stored by year/month
+Docker ≥ 20.10
 
-Customize S3 bucket via PARQUET_BASE_URI
+Docker Compose ≥ 1.29
+
+Optional: MinIO Client (mc) for local S3 management
+
+.env file with credentials
