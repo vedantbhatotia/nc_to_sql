@@ -5,8 +5,7 @@ Includes pgAdmin for browsing profiles.
 
 ⚡ Quick Start
 # 1. Clone repo
-git clone <your-repo>
-cd <your-repo>
+git clone 
 
 # 2. Start infra (Postgres + MinIO + pgAdmin)
 docker compose up -d
