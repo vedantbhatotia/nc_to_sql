@@ -1,151 +1,155 @@
-Argo NetCDF Ingestion System 🚀
+# Argo NetCDF Ingestion System 
 
-Ingest Argo NetCDF files → PostgreSQL (PostGIS) + Parquet (MinIO S3) with one command.
-Includes pgAdmin for browsing profiles.
+Ingest **Argo NetCDF** files into **PostgreSQL (PostGIS)** and **Parquet (MinIO S3)** with a single command. The system also includes **pgAdmin** for browsing profiles.
 
-⚡ Quick Start
-1. Clone the repository
-git clone <repo-url>
-cd <repo-folder>
+-----
 
-2. Setup environment variables
+### Quick Start
 
-Copy the example .env and edit if necessary:
+1.  **Clone the repository**
 
-cp .env.example .env
+    ```bash
+    git clone <repo-url>
+    cd <repo-folder>
+    ```
 
+2.  **Setup environment variables**
+    Copy the example `.env` and edit it if necessary:
 
-Example .env
+    ```bash
+    cp .env.example .env
+    ```
 
-# PostgreSQL
-PG_HOST=postgres
-PG_PORT=5432
-PG_USER=argo
-PG_PASSWORD=argo_pass
-PG_DB=argo_db
+    **Example `.env`:**
 
-# MinIO
-MINIO_HOST=minio
-MINIO_PORT=9000
-MINIO_ACCESS_KEY=minio
-MINIO_SECRET_KEY=minio123
-PARQUET_BASE_URI=s3://argo-data/parquet
+    ```
+    # PostgreSQL
+    PG_HOST=postgres
+    PG_PORT=5432
+    PG_USER=argo
+    PG_PASSWORD=argo_pass
+    PG_DB=argo_db
 
-# Other
-INGEST_VERSION=v1
-QUARANTINE_DIR=quarantine
+    # MinIO
+    MINIO_HOST=minio
+    MINIO_PORT=9000
+    MINIO_ACCESS_KEY=minio
+    MINIO_SECRET_KEY=minio123
+    PARQUET_BASE_URI=s3://argo-data/parquet
 
-3. Start infrastructure
+    # Other
+    INGEST_VERSION=v1
+    QUARANTINE_DIR=quarantine
+    ```
 
-Start PostgreSQL, MinIO, and pgAdmin:
+3.  **Start infrastructure**
+    Start PostgreSQL, MinIO, and pgAdmin:
 
-docker compose up -d
+    ```bash
+    docker compose up -d
+    ```
 
+    *Note: PostgreSQL automatically initializes the schema from `./db-init/schema.sql`.*
 
-Note:
+    Wait until Postgres is ready:
 
-PostgreSQL automatically initializes the schema from ./db-init/schema.sql.
+    ```bash
+    docker compose logs -f postgres
+    # look for "database system is ready to accept connections"
+    ```
 
-Wait until Postgres is ready:
+4.  **Ingest sample NetCDF files**
+    Place your `.nc` files in the `samples/` folder, then run:
 
-docker compose logs -f postgres
-# look for "database system is ready to accept connections"
+    ```bash
+    docker compose run --rm ingester python scripts/ingest.py samples/
+    ```
 
-4. Ingest sample NetCDF files
+    **What happens:**
 
-Place your .nc files in the samples/ folder, then run:
+      - Profiles extracted from NetCDF
+      - Metadata inserted into PostgreSQL
+      - Parquet files written to MinIO (partitioned by year/month)
+      - Problematic files moved to `quarantine/`
 
-docker compose run --rm ingester python scripts/ingest.py samples/
+    *Notes:*
 
+      - **Idempotent:** duplicate files are skipped automatically.
+      - To re-ingest the same profile, delete existing rows first:
 
-What happens:
+    <!-- end list -->
 
-Profiles extracted from NetCDF
+    ```sql
+    DELETE FROM profiles
+    WHERE float_id='1901290' AND cycle_number=249;
+    ```
 
-Metadata inserted into PostgreSQL
+5.  **Validate ingestion**
 
-Parquet files written to MinIO (partitioned by year/month)
+    **PostgreSQL (via pgAdmin)**
 
-Problematic files moved to quarantine/
+      - **URL:** `http://localhost:5050`
+      - **User:** `admin@admin.com`
+      - **Password:** `admin`
+      - Connect to server: `postgres` (host), port `5432`, credentials from `.env`
 
-Notes:
+    **Sample queries:**
 
-Idempotent: duplicate files are skipped automatically
+    ```sql
+    -- All floats
+    SELECT * FROM floats;
 
-To re-ingest the same profile, delete existing rows first:
+    -- Profiles with QC summary
+    SELECT float_id, cycle_number, profile_date, qc_summary FROM profiles;
 
-DELETE FROM profiles WHERE float_id='1901290' AND cycle_number=249;
+    -- Count profiles per float
+    SELECT float_id, COUNT(*) FROM profiles GROUP BY float_id;
 
-5. Validate ingestion
-PostgreSQL (via pgAdmin)
+    -- High-quality temperature profiles
+    SELECT float_id, cycle_number, profile_date
+    FROM profiles
+    WHERE (qc_summary->>'TEMP')::int >= 90;
+    ```
 
-URL: http://localhost:5050
+    **MinIO (S3 storage)**
 
-User: admin@admin.com
+      - **Web UI:** `http://localhost:9000` or `http://localhost:9001`
+      - **Credentials:** `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`
 
-Password: admin
+    **Example CLI:**
 
-Connect to server: postgres (host), port 5432, credentials from .env
+    ```bash
+    # Alias MinIO locally
+    docker compose exec minio mc alias set local http://localhost:9000 minio minio123
 
-Sample queries:
+    # List Parquet files
+    docker compose exec minio mc ls local/argo-data/parquet/year=2025/month=09/
+    ```
 
--- All floats
-SELECT * FROM floats;
+6.  **End-to-End Demo**
 
--- Profiles with QC summary
-SELECT float_id, cycle_number, profile_date, qc_summary FROM profiles;
+    ```bash
+    # Start services
+    docker compose up -d
 
--- Count profiles per float
-SELECT float_id, COUNT(*) FROM profiles GROUP BY float_id;
+    # Ingest files
+    docker compose run --rm ingester python scripts/ingest.py samples/
 
--- High-quality temperature profiles
-SELECT float_id, cycle_number, profile_date
-FROM profiles
-WHERE (qc_summary->>'TEMP')::int >= 90;
+    # View ingester logs
+    docker compose logs ingester
+    ```
 
-MinIO (S3 storage)
+7.  **Notes / Tips**
 
-Web UI: http://localhost:9000
- or http://localhost:9001
+      - **Idempotency:** Duplicate files are skipped; ingestion is checked via checksum.
+      - **Quarantine:** Problematic NetCDFs are moved to `quarantine/` for inspection.
+      - **Partitioning:** Parquet files are stored by `year/month`.
+      - **Force re-ingestion:** Delete rows from the `profiles` table for a specific `float_id`/`cycle_number`.
+      - **Custom S3 bucket:** Update `PARQUET_BASE_URI` in `.env`.
 
-Credentials: MINIO_ACCESS_KEY / MINIO_SECRET_KEY
+8.  **Prerequisites**
 
-Example CLI:
-
-# Alias MinIO locally
-docker compose exec minio mc alias set local http://localhost:9000 minio minio123
-
-# List Parquet files
-docker compose exec minio mc ls local/argo-data/parquet/year=2025/month=09/
-
-6. End-to-End Demo
-# Start services
-docker compose up -d
-
-# Ingest files
-docker compose run --rm ingester python scripts/ingest.py samples/
-
-# View ingester logs
-docker compose logs ingester
-
-7. Notes / Tips
-
-Idempotency: duplicate files are skipped; ingestion is checked via checksum.
-
-Quarantine: problematic NetCDFs are moved to quarantine/ for inspection.
-
-Partitioning: Parquet files stored by year/month.
-
-Force re-ingestion: delete rows from profiles table for specific float_id/cycle_number.
-
-Custom S3 bucket: update PARQUET_BASE_URI in .env.
-
-8. Prerequisites
-
-Docker ≥ 20.10
-
-Docker Compose ≥ 1.29
-
-Optional: MinIO Client (mc) for local S3 management
-
-.env file with credentials
+      - Docker ≥ 20.10
+      - Docker Compose ≥ 1.29
+      - Optional: MinIO Client (`mc`) for local S3 management
+      - `.env` file with credentials
