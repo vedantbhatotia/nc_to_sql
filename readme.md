@@ -1,150 +1,129 @@
 Argo NetCDF Ingestion System 🚀
 
-This project ingests Argo NetCDF files into PostgreSQL + PostGIS, writes per-profile Parquet files to MinIO, and provides pgAdmin for exploration.
+Ingest Argo NetCDF files → PostgreSQL (PostGIS) + Parquet (MinIO S3) with one command.
+Includes pgAdmin for browsing profiles.
 
-1️⃣ Prerequisites
+⚡ Quick Start
+# 1. Clone repo
+git clone <your-repo>
+cd <your-repo>
+
+# 2. Start infra (Postgres + MinIO + pgAdmin)
+docker compose up -d
+
+# 3. Ingest sample NetCDFs
+docker compose run --rm ingester python scripts/ingest.py samples/
+
+
+✅ Profiles appear in PostgreSQL
+✅ Parquet files land in MinIO (partitioned by year/month)
+
+📦 Prerequisites
 
 Docker ≥ 20.10
 
 Docker Compose ≥ 1.29
 
-.env file with PostgreSQL and MinIO credentials, e.g.:
+A .env file with credentials:
 
+# PostgreSQL
 PG_HOST=postgres
 PG_PORT=5432
 PG_USER=argo
 PG_PASSWORD=argo_pass
 PG_DB=argo_db
 
+# MinIO
 MINIO_HOST=minio
 MINIO_PORT=9000
 MINIO_ACCESS_KEY=minio
 MINIO_SECRET_KEY=minio123
 PARQUET_BASE_URI=s3://argo-data/parquet
 
+# Other
 INGEST_VERSION=v1
 QUARANTINE_DIR=quarantine
 
 
-A samples/ folder with NetCDF .nc files for testing.
+Place .nc files in samples/ for testing.
 
-2️⃣ Services (via Docker Compose)
+🔧 Services
 
-PostgreSQL + PostGIS: stores float/profile metadata.
+PostgreSQL + PostGIS → stores metadata
 
-MinIO: S3-compatible storage for Parquet files.
+MinIO → S3-compatible Parquet storage
 
-pgAdmin: browser-based PostgreSQL UI.
+pgAdmin → PostgreSQL UI (http://localhost:5050
+, user: admin@admin.com, pass: admin)
 
-Ingester: Python container running the ingestion script.
+Ingester → Python service that parses .nc and writes to DB + MinIO
 
-Start services
-docker compose up -d
-
-
-Check status:
-
-docker compose ps
-
-3️⃣ Ingestion
-
-Run the ingester on a folder of NetCDF files:
-
+📥 Ingestion
 docker compose run --rm ingester python scripts/ingest.py samples/
 
 
-Each NetCDF file is read and profiles are extracted.
+Extracts PRES, TEMP, PSAL, DOXY, CHLA
 
-Parquet files are written to s3://argo-data/parquet/year=YYYY/month=MM/....
+Computes QC summaries
 
-Metadata is inserted/updated in PostgreSQL.
+Inserts metadata into PostgreSQL
 
-Problematic files are moved to quarantine/.
+Writes Parquet:
 
-4️⃣ Validation
-Parquet
+s3://argo-data/parquet/year=YYYY/month=MM/<float>_cycle_<n>.parquet
 
-You can inspect Parquet files inside MinIO:
 
+Moves problematic files to quarantine/
+
+🔍 Validation
+Parquet (in MinIO)
 docker compose exec minio mc alias set local http://localhost:9000 minio minio123
 docker compose exec minio mc ls local/argo-data/parquet/year=2025/month=09/
 
-
-Or download for local inspection:
-
-docker compose exec ingester bash
-aws --endpoint-url=http://minio:9000 s3 cp s3://argo-data/parquet/year=2025/month=09/ ./ -r
-
-PostgreSQL
-
-Access via pgAdmin:
+PostgreSQL (via pgAdmin)
 
 URL: http://localhost:5050
 
-User: admin@admin.com / admin
+User: admin@admin.com
 
-Add server with .env credentials.
+Pass: admin
+
+Connect using .env credentials
 
 Sample queries:
 
--- Show all floats
+-- All floats
 SELECT * FROM floats;
 
--- Show profiles with QC summary
-SELECT float_id, cycle_number, profile_date, qc_summary
-FROM profiles
-ORDER BY profile_date DESC;
+-- Profiles with QC summary
+SELECT float_id, cycle_number, profile_date, qc_summary FROM profiles;
 
 -- Count profiles per float
-SELECT float_id, COUNT(*) AS n_profiles
-FROM profiles
-GROUP BY float_id
-ORDER BY n_profiles DESC;
+SELECT float_id, COUNT(*) FROM profiles GROUP BY float_id;
 
--- Filter by date & QC
+-- High-quality temperature profiles
 SELECT float_id, cycle_number, profile_date
 FROM profiles
-WHERE profile_date >= '2025-01-01' 
-  AND (qc_summary->>'TEMP')::int >= 90;
+WHERE (qc_summary->>'TEMP')::int >= 90;
 
-5️⃣ End-to-End Test 🎯
-
-Start Docker services:
-
+🎯 End-to-End Demo
 docker compose up -d
-
-
-Run ingestion:
-
 docker compose run --rm ingester python scripts/ingest.py samples/
-
-
-Check logs:
-
 docker compose logs ingester
 
 
-Validate:
+Then:
 
-Parquet files in MinIO (mc ls or via S3 browser).
+Browse Parquet in MinIO (or download via S3 tools)
 
-Profiles in PostgreSQL (psql or pgAdmin).
+Explore metadata in PostgreSQL via pgAdmin
 
-Sample query:
+📝 Notes
 
-SELECT float_id, cycle_number, profile_date FROM profiles LIMIT 10;
+Idempotent: duplicate files skipped
 
+Quarantine: problematic NetCDFs stored in quarantine/
 
-✅ Everything should be visible and queryable. Profiles should include TEMP, PSAL, DOXY, CHLA, and QC summary.
+Partitioning: Parquet stored by year/month
 
-6️⃣ Notes / Tips
-
-quarantine/ stores problematic NetCDF files for inspection.
-
-Ingestion is idempotent: duplicate files are skipped.
-
-Parquet files are partitioned by year/month for efficient S3 querying.
-
-Customize PARQUET_BASE_URI in .env to use a different S3 bucket/prefix.
-
-This README ensures teammates or judges can reproduce the full ingestion pipeline quickly, inspect data, and validate both Parquet + PostgreSQL.
+Customize S3 bucket via PARQUET_BASE_URI
