@@ -11,3 +11,10 @@ loguru
 s3fs
 python-dotenv
 boto3
+sentence-transformers # For generating text embeddings
+chromadb             # Your chosen vector database
+fastapi              # Web framework for the API
+uvicorn              # ASGI server for FastAPI
+streamlit            # For building interactive dashboards
+plotly               # For powerful visualizations
+tqdm                 # For progress bars (helpful in ingestion/indexing)
