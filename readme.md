@@ -4,6 +4,18 @@ Ingest **Argo NetCDF** files into **PostgreSQL (PostGIS)** and **Parquet (MinIO 
 
 -----
 
+### Directory Structure
+
+*   `api/`: Contains the FastAPI web application for serving data.
+*   `db-init/`: SQL scripts in this directory are automatically executed by the PostgreSQL container on its first startup. This is used to create the database schema, tables, and indexes.
+*   `docker/`: Contains `Dockerfiles` for building the container images.
+*   `knowledge_base/`: Detailed documentation about the data schema, domain knowledge, and query examples.
+*   `quarantine/`: The ingestion script is designed to move malformed or problematic NetCDF files into this directory for manual inspection.
+*   `samples/`: A directory to place your sample `.nc` files for ingestion.
+*   `scripts/`: Contains the main Python scripts for ingestion (`ingest.py`) and validation (`verify_ingest.py`, `validate.py`).
+
+-----
+
 ### Quick Start
 
 1.  **Clone the repository**
