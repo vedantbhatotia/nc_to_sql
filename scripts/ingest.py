@@ -212,7 +212,8 @@ def extract_profile(ds: xr.Dataset, profile_idx: int, checksum: str) -> dict:
 
 def compute_summary(profile: dict) -> str:
     lat, lon = profile.get("lat", np.nan), profile.get("lon", np.nan)
-    date_str = profile.get("profile_date").strftime("%Y-%m-%d") if profile.get("profile_date") else "N/A"
+    profile_date = profile.get("profile_date")
+    date_str = profile_date.strftime("%Y-%m-%d") if profile_date else "N/A"
     summary = f"Float {profile.get('float_id','N/A')} cycle {profile.get('cycle_number','N/A')} on {date_str} at ({lat:.2f},{lon:.2f})."
     for var, unit in [("TEMP","°C"),("PSAL","PSU"),("DOXY","µmol/kg"),("CHLA","mg/m³")]:
         arr = np.array(profile.get(var, []), dtype=float)
